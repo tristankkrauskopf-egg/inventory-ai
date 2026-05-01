@@ -1,0 +1,474 @@
+import { supabase } from "./supabaseClient";
+import { useState, useEffect } from "react";
+import "./App.css";
+
+export default function App() {
+  const [products, setProducts] = useState([]);
+  const [form, setForm] = useState({
+    name: "",
+    inventory: "",
+    dailySales: "",
+    leadTime: "",
+  });
+
+  const [user, setUser] = useState(null);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [aiText, setAiText] = useState({});
+  const [editingIndex, setEditingIndex] = useState(null);
+const [editForm, setEditForm] = useState({
+  name: "",
+  inventory: "",
+  dailySales: "",
+  leadTime: "",
+});
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      setUser(data.user);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => {
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (user) {
+      fetchProducts();
+    }
+  }, [user]);
+
+  const fetchProducts = async () => {
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from("products")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("name", { ascending: true });
+
+    if (error) {
+      console.error("Fetch error:", error);
+      return;
+    }
+
+    setProducts(
+      data.map((p) => ({
+        id: p.id,
+        name: p.name,
+        inventory: p.inventory,
+        dailySales: p.daily_sales,
+        leadTime: p.lead_time,
+      }))
+    );
+  };
+
+  const handleFileUpload = (e) => {
+    if (!user) return;
+
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+
+    reader.onload = (event) => {
+      const text = event.target.result;
+      const rows = text.split("\n").slice(1);
+
+      const parsed = rows
+        .filter((row) => row.trim() !== "")
+        .map((row) => {
+          const [name, inventory, dailySales, leadTime] = row.split(",");
+
+          return {
+            name,
+            inventory: Number(inventory),
+            dailySales: Number(dailySales),
+            leadTime: Number(leadTime),
+          };
+        });
+
+      const rowsToInsert = parsed.map((p) => ({
+        user_id: user.id,
+        name: p.name,
+        inventory: p.inventory,
+        daily_sales: p.dailySales,
+        lead_time: p.leadTime,
+      }));
+
+      supabase.from("products").insert(rowsToInsert).then(({ error }) => {
+        if (error) {
+          console.error("CSV insert error:", error);
+          return;
+        }
+
+        fetchProducts();
+      });
+    };
+
+    reader.readAsText(file);
+  };
+
+  const calculate = (p) => {
+    const reorderPoint = p.dailySales * p.leadTime;
+    const daysLeft = Math.floor(p.inventory / p.dailySales);
+    const bufferDays = 3;
+    const targetStock = p.dailySales * (p.leadTime + bufferDays);
+    const orderQuantity = Math.max(0, Math.ceil(targetStock - p.inventory));
+
+    let status = "Healthy";
+    let action = "Do not reorder";
+
+    if (p.inventory < reorderPoint) {
+      status = "High Risk";
+      action = "Reorder now";
+    } else if (p.inventory < reorderPoint * 1.2) {
+      status = "Medium Risk";
+      action = "Reorder soon";
+    }
+
+    return { ...p, reorderPoint, daysLeft, status, action, orderQuantity };
+  };
+
+  const addProduct = async () => {
+    if (!form.name || !form.inventory || !form.dailySales || !form.leadTime) return;
+    if (!user) return;
+
+    const { error } = await supabase.from("products").insert([
+      {
+        user_id: user.id,
+        name: form.name,
+        inventory: Number(form.inventory),
+        daily_sales: Number(form.dailySales),
+        lead_time: Number(form.leadTime),
+      },
+    ]);
+
+    if (error) {
+      console.error("Insert error:", error);
+      return;
+    }
+
+    setForm({ name: "", inventory: "", dailySales: "", leadTime: "" });
+    fetchProducts();
+  };
+
+  const getAIExplanation = async (data) => {
+    if (aiText[data.name]) return aiText[data.name];
+
+    try {
+      const res = await fetch("https://inventory-ai-api-i0l0.onrender.com", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ product: data }),
+      });
+
+      const result = await res.json();
+      return result.explanation;
+    } catch (err) {
+      return "AI explanation failed.";
+    }
+  };
+
+  const deleteProduct = async (index) => {
+    const product = products[index];
+
+    const { error } = await supabase
+      .from("products")
+      .delete()
+      .eq("id", product.id)
+      .eq("user_id", user.id);
+
+    if (error) {
+      console.error("Delete error:", error);
+      return;
+    }
+
+    fetchProducts();
+  };
+const startEdit = (index) => {
+  const p = products[index];
+  setEditingIndex(index);
+  setEditForm({
+    name: p.name,
+    inventory: p.inventory,
+    dailySales: p.dailySales,
+    leadTime: p.leadTime,
+  });
+};
+
+const saveEdit = async (index) => {
+  const product = products[index];
+
+  const { error } = await supabase
+    .from("products")
+    .update({
+      name: editForm.name,
+      inventory: Number(editForm.inventory),
+      daily_sales: Number(editForm.dailySales),
+      lead_time: Number(editForm.leadTime),
+    })
+    .eq("id", product.id)
+    .eq("user_id", user.id);
+
+  if (error) {
+    console.error("Update error:", error);
+    return;
+  }
+
+  setEditingIndex(null);
+  fetchProducts();
+};
+  const signUp = async () => {
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+  });
+
+  if (error) {
+    alert(error.message);
+    console.error("Signup error:", error);
+    return;
+  }
+
+  if (data.user) {
+    alert("Account created. Now click Login.");
+  }
+};
+const signIn = async () => {
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
+
+  if (error) {
+    alert(error.message);
+    console.error("Login error:", error);
+    return;
+  }
+
+  setUser(data.user);
+};
+
+const signOut = async () => {
+  await supabase.auth.signOut();
+};
+if (!user) {
+  return (
+    <div className="page">
+      <div className="container">
+        <div className="panel">
+          <h2>Login / Sign Up</h2>
+
+          <input
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+
+          <input
+            placeholder="Password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+
+          <button onClick={signIn}>Login</button>
+          <button onClick={signUp}>Sign Up</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+  return (
+    <div className="page">
+      <div className="container">
+        <div className="hero">
+          <div>
+            <h1 className="main-title">Reorder Dashboard</h1>
+            <p className="subtitle">
+              Add products and get simple reorder recommendations before you run out of stock
+            </p>
+            <button onClick={signOut}>Logout</button>
+          </div>
+        </div>
+
+        <div className="cards">
+          <div className="card">
+            <p>Total Products</p>
+            <h2>{products.length}</h2>
+          </div>
+
+          <div className="card">
+            <p>High Risk</p>
+            <h2>{products.filter((p) => calculate(p).status === "High Risk").length}</h2>
+          </div>
+
+          <div className="card">
+            <p>Need Review</p>
+            <h2>{products.filter((p) => calculate(p).status === "Medium Risk").length}</h2>
+          </div>
+        </div>
+
+        <div className="panel">
+          <h2>Add Product</h2>
+
+          <input type="file" onChange={handleFileUpload} />
+
+          <div className="form-grid">
+            <input
+              placeholder="Product name"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+            />
+
+            <input
+              placeholder="Current inventory"
+              value={form.inventory}
+              onChange={(e) => setForm({ ...form, inventory: e.target.value })}
+            />
+
+            <input
+              placeholder="Daily sales"
+              value={form.dailySales}
+              onChange={(e) => setForm({ ...form, dailySales: e.target.value })}
+            />
+
+            <input
+              placeholder="Lead time in days"
+              value={form.leadTime}
+              onChange={(e) => setForm({ ...form, leadTime: e.target.value })}
+            />
+          </div>
+
+          <button onClick={addProduct}>Add Product</button>
+        </div>
+
+        <div className="panel">
+          <h2>Recommendations</h2>
+
+          {products.filter((p) => calculate(p).status !== "Healthy").length > 0 && (
+            <div className="alert-bar">
+              🚨 {products.filter((p) => calculate(p).status !== "Healthy").length} items need attention
+            </div>
+          )}
+
+          {products.length === 0 ? (
+            <p className="empty">No products added yet. Add one above to see recommendations.</p>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th>Inventory</th>
+                  <th>Days Left</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                  <th>Order Qty</th>
+                  <th>Explanation</th>
+                  <th>Delete</th>
+                  <th>Edit</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {products.map((p, i) => {
+                  const data = calculate(p);
+
+                  if (!aiText[p.name] && data.status !== "Healthy") {
+                    getAIExplanation(data).then((text) => {
+                      setAiText((prev) => ({ ...prev, [p.name]: text }));
+                    });
+                  }
+
+                  return (
+                    <tr
+                      key={p.id}
+                      className={`fade-in ${
+                        data.status === "High Risk"
+                          ? "high-risk-row"
+                          : data.status === "Medium Risk"
+                          ? "medium-risk-row"
+                          : ""
+                      }`}
+                    >
+                      <td>
+  {editingIndex === i ? (
+    <input
+      value={editForm.name}
+      onChange={(e) =>
+        setEditForm({ ...editForm, name: e.target.value })
+      }
+    />
+  ) : (
+    p.name
+  )}
+</td>
+                      <td>
+  {editingIndex === i ? (
+    <input
+      value={editForm.inventory}
+      onChange={(e) =>
+        setEditForm({ ...editForm, inventory: e.target.value })
+      }
+    />
+  ) : (
+    p.inventory
+  )}
+</td>
+                      <td>{data.daysLeft}</td>
+
+                      <td>
+                        {data.status === "High Risk" && "🔥 "}
+                        {data.status === "Medium Risk" && "⚠️ "}
+                        {data.status === "Healthy" && "✅ "}
+                        {data.status}
+                      </td>
+
+                      <td>
+                        {data.status === "High Risk" && "🚨 "}
+                        {data.status === "Medium Risk" && "⏳ "}
+                        {data.status === "Healthy" && "✔️ "}
+                        {data.action}
+                      </td>
+
+                      <td>{data.status === "Healthy" ? "-" : data.orderQuantity}</td>
+
+                      <td>
+                        {data.status === "Healthy"
+                          ? `${p.name} has sufficient inventory coverage (${data.daysLeft} days). No immediate action is required.`
+                          : aiText[p.name]
+                          ? aiText[p.name]
+                          : "Generating..."}
+                      </td>
+
+                      <td>
+                        <button className="delete-btn" onClick={() => deleteProduct(i)}>
+                          🗑️
+                        </button>
+                      </td>
+                      <td>
+  {editingIndex === i ? (
+    <button onClick={() => saveEdit(i)}>Save</button>
+  ) : (
+    <button onClick={() => startEdit(i)}>Edit</button>
+  )}
+</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

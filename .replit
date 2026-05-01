@@ -1,0 +1,53 @@
+modules = ["nodejs-24"]
+
+[deployment]
+router = "application"
+deploymentTarget = "autoscale"
+
+[deployment.postBuild]
+args = ["pnpm", "store", "prune"]
+env = { "CI" = "true" }
+
+[workflows]
+runButton = "Project"
+
+[agent]
+stack = "PNPM_WORKSPACE"
+expertMode = true
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 20000
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
+[[ports]]
+localPort = 8081
+externalPort = 80
+
+[[ports]]
+localPort = 8082
+externalPort = 3001
+
+[[ports]]
+localPort = 8083
+externalPort = 3002
+
+[[ports]]
+localPort = 8084
+externalPort = 4200
+
+[[ports]]
+localPort = 18987
+externalPort = 3000
+
+[userenv]
+
+[userenv.shared]
+VITE_SUPABASE_URL = "https://vvscfbpqgdkpekknziwq.supabase.co"
+VITE_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ2c2NmYnBxZ2RrcGVra256aXdxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc1NzU5MDUsImV4cCI6MjA5MzE1MTkwNX0.8lazKCRhMXWTIvQ6XP_Mm8-8lB5AqZgovMveiRrHQC4"
+
+[nix]
+packages = ["zip"]
